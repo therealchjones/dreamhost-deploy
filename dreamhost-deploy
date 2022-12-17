@@ -1,0 +1,77 @@
+#!/bin/sh
+
+# dreamhost-deploy repository
+#
+# Clones a portion of the GitHub repository indicated by respository into the
+# appropriate directory on the DreamHost server where dreamhost-deploy is
+# running. Intended to be called by GitHub via ssh as part of a workflow.
+
+usage() {
+	echo "Usage: dreamhost-deploy repository"
+}
+check_dir() {
+	dir="${1:-}"
+	if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+		echo "Error: Unable to find directory '$1'" >&2
+		return 1
+	fi
+	if ! git_root="$(cd "$dir" && git rev-parse -q --show-toplevel)" 2>/dev/null \
+		|| [ -z "$git_root" ] \
+		|| [ ! "$git_root" = "$(cd "$dir" && pwd)" ]; then
+		echo "Error: '$dir' is not the root of a git repository." >&2
+		echo "       Consider manually initializing it to track '$GITHUB_PREFIX/$REPOSITORY' using" >&2
+		echo "       git clone --branch main --depth 1 --single-branch '$GITHUB_PREFIX/$REPOSITORY' '$dir'" >&2
+		return 1
+	fi
+	if ! status="$(cd "$dir" && git status --porcelain)" \
+		|| [ -n "$status" ] \
+		|| ! main="$(cd "$dir" && git rev-parse main)" \
+		|| ! head="$(cd "$dir" && git rev-parse HEAD)" \
+		|| [ -z "$main" ] \
+		|| [ -z "$head" ] \
+		|| [ "$main" != "$head" ]; then
+		echo "Error: '$dir' is not a clean version of the 'main' branch." >&2
+		return 1
+	fi
+	return 0
+}
+if [ "$#" != 1 ]; then
+	usage >&2
+	exit 1
+fi
+
+GITHUB_PREFIX='https://github.com/therealchjones'
+REPOSITORY="${1#"$GITHUB_PREFIX"/}"
+DIRECTORY=""
+case "$REPOSITORY" in
+	"homepage")
+		DIRECTORY="$HOME/public_html"
+		ADDRESS="https://aleph0.com/~chjones"
+		;;
+	aleph0.com)
+		DIRECTORY="$HOME/aleph0.com"
+		ADDRESS="https://aleph0.com"
+		;;
+	*)
+		echo "Error: Unrecognized repository '$REPOSITORY'" >&2
+		exit 1
+		;;
+esac
+
+if ! check_dir "$DIRECTORY"; then
+	exit 1
+fi
+
+if ! git ls-remote -q --exit-code "$GITHUB_PREFIX/$REPOSITORY" main >/dev/null; then
+	echo "Error: Unable to find branch 'main' in repository '$1'" >&2
+	exit 1
+fi
+
+echo "Deploying from '$1' branch 'main' to '$DIRECTORY'"
+if ! (cd "$DIRECTORY" && git pull -v --allow-unrelated-histories --depth 1 "$GITHUB_PREFIX/$REPOSITORY" main); then
+	echo "Error: Unable to update '$DIRECTORY'" >&2
+	exit 1
+fi
+
+echo "Site deployed. Files updated at $ADDRESS."
+exit 0
